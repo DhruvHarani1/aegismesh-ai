@@ -3,6 +3,8 @@
 Self-healing zero-trust mesh overlay over raw UDP, built from `AegisMesh_AI_Project_Proposal.docx`.
 Pure Python 3.10+ standard library (nothing to install). Optional: `pip install mcp` for the MCP server.
 
+**New to the project? Read [docs/PROJECT_EXPLAINED.md](docs/PROJECT_EXPLAINED.md)** (full explanation, UI walkthrough, demo story, viva Q&A).
+
 ## Layout
 
 | Path | Proposal module |
