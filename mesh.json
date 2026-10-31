@@ -1,0 +1,14 @@
+{
+  "secret": "aegismesh-demo-secret",
+  "token": "aegis-ctl-token",
+  "observer": "E",
+  "params": {"hb_interval": 0.25, "hb_timeout": 1.0},
+  "nodes": {
+    "A": {"id": 1, "host": "127.0.0.1", "port": 9001, "ctl": 9101, "pos": [90, 210]},
+    "B": {"id": 2, "host": "127.0.0.1", "port": 9002, "ctl": 9102, "pos": [260, 90]},
+    "C": {"id": 3, "host": "127.0.0.1", "port": 9003, "ctl": 9103, "pos": [470, 90]},
+    "D": {"id": 4, "host": "127.0.0.1", "port": 9004, "ctl": 9104, "pos": [260, 330]},
+    "E": {"id": 5, "host": "127.0.0.1", "port": 9005, "ctl": 9105, "pos": [640, 210]}
+  },
+  "links": [["A", "B", 1], ["B", "C", 1], ["C", "E", 1], ["B", "D", 2], ["D", "E", 2], ["A", "D", 2]]
+}

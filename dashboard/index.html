@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>AegisMesh-AI Control Room</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#0b1020;--panel:#121a30;--line:#24304f;--tx:#d7e0f5;--dim:#7d8bb0;--ok:#2ecc71;--warn:#f1c40f;--bad:#ff4d5e;--acc:#4da3ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:13px/1.4 system-ui,Segoe UI,sans-serif}
+header{display:flex;align-items:center;gap:16px;padding:10px 16px;border-bottom:1px solid var(--line)}
+header h1{font-size:16px;margin:0}header .pill{margin-left:auto;color:var(--dim)}
+.grid{display:grid;grid-template-columns:minmax(560px,1.4fr) minmax(380px,1fr);gap:12px;padding:12px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;min-width:0}
+.panel h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin:0 0 8px}
+svg{width:100%;height:auto;display:block}
+.edge{stroke:var(--ok);stroke-width:3;fill:none}.edge.warn{stroke:var(--warn)}.edge.bad{stroke:var(--bad);animation:pulse .7s infinite alternate}
+.edge.down{stroke:#4a556f;stroke-dasharray:5 5;animation:none}.edge.path{stroke-width:6;filter:drop-shadow(0 0 5px #4da3ff)}
+@keyframes pulse{from{opacity:1}to{opacity:.25}}
+.node circle{fill:#16223f;stroke:var(--acc);stroke-width:3}.node.rogue circle{stroke:var(--bad);fill:#3b1520}
+.node.quar circle{stroke:#6b7490;fill:#1a1e2c;stroke-dasharray:4 4}.node text{fill:var(--tx);font-weight:700;font-size:20px;text-anchor:middle;dominant-baseline:central}
+.node .sub{font-size:10px;font-weight:400;fill:var(--dim)}.elabel{fill:var(--dim);font-size:11px;text-anchor:middle}
+.btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+button{background:#1c2a4d;color:var(--tx);border:1px solid var(--line);padding:6px 10px;border-radius:6px;cursor:pointer;font:inherit}
+button:hover{border-color:var(--acc)}button.danger{background:#4a1b25}button.good{background:#14402b}
+select{background:#0f1730;color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:5px}
+.term{background:#050810;border-radius:6px;padding:8px;height:250px;overflow:auto;font:12px/1.5 Consolas,monospace}
+.term .thought{color:#9fd0ff}.term .tool_call{color:var(--warn)}.term .tool_result{color:#8fe3b0}.term .rca{color:#d6a7ff}.term .error{color:var(--bad)}.term .info{color:var(--dim)}
+.hex{font:11px/1.6 Consolas,monospace;max-height:230px;overflow:auto;background:#050810;border-radius:6px;padding:6px}
+.hex div{white-space:nowrap}.hex .f{color:#ff9f43;font-weight:700}.hex .e{color:#ff6bd6}.hex .c{color:#54e0c3}.hex .meta{color:var(--dim)}.hex .badf{color:var(--bad)}
+table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:3px 6px;text-align:right;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}th{color:var(--dim);font-weight:500}
+.win{display:flex;gap:4px;margin:6px 0}.slot{flex:1;border:1px solid var(--line);border-radius:4px;padding:6px 2px;text-align:center;font-size:11px}
+.slot.sent{background:#1d3b6b}.slot.acked{background:#14402b}.slot.retx{background:#6b3a14;animation:pulse .5s infinite alternate}.slot.free{opacity:.4}
+.kpi{display:flex;gap:18px;flex-wrap:wrap}.kpi div b{display:block;font-size:20px}.kpi span{color:var(--dim);font-size:11px}
+.legend{color:var(--dim);font-size:11px;margin-top:4px}
+</style></head><body>
+<header><h1>AegisMesh-AI &middot; Control Room</h1><span id="conn" class="pill">connecting...</span></header>
+<div class="grid">
+ <div>
+  <div class="panel"><h2>Live mesh topology</h2>
+   <svg id="topo" viewBox="0 0 740 420"></svg>
+   <div class="legend">edge colour = measured loss (green &lt;10%, amber &lt;50%, red pulsing &ge;50%) &middot; glowing = active path &middot; label = advertised cost</div>
+   <div class="btns" id="chaos">
+    <select id="lnk"></select>
+    <button class="danger" onclick="act('sever',lnkNodes())">Sever link (90% loss, 400ms)</button>
+    <button class="good" onclick="act('heal',lnkNodes())">Heal link</button>
+    <select id="nodeSel"></select>
+    <button class="danger" onclick="act('infect',[nodeSel.value])">Infect node</button>
+    <button onclick="act('cure',[nodeSel.value])">Cure</button>
+    <button onclick="act('release',[nodeSel.value])">Release quarantine</button>
+   </div>
+   <div class="btns">Stream
+    <select id="src"></select> &rarr; <select id="dst"></select>
+    <button class="good" onclick="act('stream',[src.value,dst.value])">Start</button>
+    <button onclick="act('stop',[src.value])">Stop</button>
+   </div>
+  </div>
+  <div class="panel" style="margin-top:12px"><h2>Selective Repeat window <select id="arq"></select></h2>
+   <div id="win" class="win"></div><div id="arqmeta" class="legend"></div></div>
+  <div class="panel" style="margin-top:12px"><h2>Link telemetry</h2><div id="links"></div></div>
+ </div>
+ <div>
+  <div class="panel"><h2>AI NetOps agent - decision trace</h2><div class="term" id="agent"></div></div>
+  <div class="panel" style="margin-top:12px"><h2>Delivery (stream at destination)</h2><div class="kpi" id="kpi"></div></div>
+  <div class="panel" style="margin-top:12px"><h2>Wire inspector (<span id="obs"></span>) &mdash; <span style="color:#ff9f43">0x7E flag</span> <span style="color:#ff6bd6">stuffed escape</span> <span style="color:#54e0c3">CRC-32</span></h2><div class="hex" id="hex"></div></div>
+  <div class="panel" style="margin-top:12px"><h2>Node event log</h2><div class="term" id="events" style="height:150px"></div></div>
+ </div>
+</div>
+<script>
+const $=id=>document.getElementById(id);let CFG,LAST;
+const NS='http://www.w3.org/2000/svg';
+async function init(){CFG=await (await fetch('/config')).json();
+ const names=Object.keys(CFG.nodes);
+ for(const s of [$('nodeSel'),$('src'),$('dst')])names.forEach(n=>s.add(new Option('Node '+n,n)));
+ $('src').value='A';$('dst').value=CFG.observer;$('nodeSel').value='D';
+ CFG.links.forEach(([a,b])=>{$('lnk').add(new Option(a+'-'+b,a+'-'+b));$('arq').add(new Option(a+' → '+b,a+'|'+b));$('arq').add(new Option(b+' → '+a,b+'|'+a));});
+ $('lnk').value='B-C';$('arq').value='B|C';$('obs').textContent='node '+CFG.observer;
+ const svg=$('topo');
+ CFG.links.forEach(([a,b,c])=>{const l=document.createElementNS(NS,'line');l.id='e_'+[a,b].sort().join('');l.setAttribute('class','edge');
+  const pa=CFG.nodes[a].pos,pb=CFG.nodes[b].pos;l.setAttribute('x1',pa[0]);l.setAttribute('y1',pa[1]);l.setAttribute('x2',pb[0]);l.setAttribute('y2',pb[1]);svg.appendChild(l);
+  const t=document.createElementNS(NS,'text');t.id='t_'+[a,b].sort().join('');t.setAttribute('class','elabel');t.setAttribute('x',(pa[0]+pb[0])/2);t.setAttribute('y',(pa[1]+pb[1])/2-8);svg.appendChild(t);});
+ names.forEach(n=>{const p=CFG.nodes[n].pos;const g=document.createElementNS(NS,'g');g.id='n_'+n;g.setAttribute('class','node');
+  g.innerHTML=`<circle cx="${p[0]}" cy="${p[1]}" r="30"/><text x="${p[0]}" y="${p[1]-3}">${n}</text><text class="sub" x="${p[0]}" y="${p[1]+17}" id="s_${n}"></text>`;svg.appendChild(g);});
+ const es=new EventSource('/events');es.onmessage=e=>render(JSON.parse(e.data));
+ es.onerror=()=>{$('conn').textContent='disconnected - retrying'};}
+function lnkNodes(){return $('lnk').value.split('-')}
+async function act(action,nodes){await fetch('/api/action',{method:'POST',body:JSON.stringify({action,nodes})});}
+function lossOf(st,a,b){let m=null;for(const [x,y] of [[a,b],[b,a]]){const s=st[x];if(!s||s.error)continue;const l=s.links.find(l=>l.neighbor==y);if(l&&l.loss_pct!=null)m=Math.max(m??0,l.loss_pct);}return m;}
+function linkOf(st,a,b){const s=st[a];return s&&!s.error?s.links.find(l=>l.neighbor==b):null}
+function render(m){LAST=m;const st=m.statuses;$('conn').textContent='live '+new Date(m.t*1000).toLocaleTimeString();
+ const quar=new Set();Object.values(st).forEach(s=>s.quarantine&&Object.keys(s.quarantine).forEach(k=>quar.add(k)));
+ const srcS=st[$('src').value],dstN=$('dst').value;const path=(srcS&&srcS.paths&&srcS.paths[dstN])||[];
+ const pathEdges=new Set(path.slice(1).map((n,i)=>[path[i],n].sort().join('')));
+ CFG.links.forEach(([a,b])=>{const k=[a,b].sort().join('');const e=$('e_'+k),t=$('t_'+k);
+  const la=linkOf(st,a,b),lb=linkOf(st,b,a);const loss=lossOf(st,a,b);const up=(la&&la.up)||(lb&&lb.up);
+  let cls='edge';if(quar.has(a)||quar.has(b)||!up)cls+=' down';else if(loss>=50)cls+=' bad';else if(loss>=10)cls+=' warn';
+  if(pathEdges.has(k))cls+=' path';e.setAttribute('class',cls);
+  const cost=Math.max(la?la.cost:0,lb?lb.cost:0);t.textContent=(cost>=9999?'cost 9999':'cost '+cost)+(loss!=null&&up?' · '+loss+'% loss':'');});
+ Object.keys(CFG.nodes).forEach(n=>{const g=$('n_'+n),s=st[n];let c='node';if(quar.has(n))c+=' quar';else if(s&&s.rogue)c+=' rogue';g.setAttribute('class',c);
+  $('s_'+n).textContent=!s||s.error?'down':quar.has(n)?'QUARANTINED':s.rogue?'ROGUE':'spf '+s.spf_ms+'ms';});
+ // links table
+ let rows='<table><tr><th>link</th><th>loss%</th><th>rtt ms</th><th>rtt var</th><th>crc err</th><th>dpi 5s</th><th>retx</th><th>cost</th></tr>';
+ CFG.links.forEach(([a,b])=>{const l=linkOf(st,a,b);if(!l)return;const lo=lossOf(st,a,b);
+  rows+=`<tr><td>${a}-${b}</td><td style="color:${lo>=50?'var(--bad)':lo>=10?'var(--warn)':'inherit'}">${lo??'-'}</td><td>${l.rtt_ms??'-'}</td><td>${l.rtt_var??'-'}</td><td>${l.crc_errors}</td><td>${l.dpi_recent}</td><td>${l.retransmits}</td><td>${l.cost}</td></tr>`});
+ $('links').innerHTML=rows+'</table>';
+ // ARQ window
+ const [an,bn]=$('arq').value.split('|');const al=linkOf(st,an,bn);
+ if(al){$('win').innerHTML=al.sr.slots.map(s=>`<div class="slot ${s.state}">#${s.seq}<br>${s.state}${s.tries>1?' x'+s.tries:''}</div>`).join('');
+  $('arqmeta').textContent=`${an}→${bn}: base=${al.sr.base} next=${al.sr.next} queued=${al.sr.queued} RTO=${al.sr.rto_ms}ms sent=${al.sr.sent} retransmits=${al.sr.retransmits}  (Ws=Wr=8, modulo 16)`;}
+ // KPI
+ const d=st[dstN];let k='';if(d&&d.stream_rx){const r=d.stream_rx[$('src').value];if(r)k=`<div><b>${r.received}</b><span>unique frames received</span></div><div><b style="color:${r.missing?'var(--warn)':'var(--ok)'}">${r.missing}</b><span>missing / in flight</span></div><div><b>${r.latency_ms??'-'}</b><span>latency ms</span></div><div><b>${r.idle_s}s</b><span>since last frame</span></div>`;}
+ $('kpi').innerHTML=k||'<span>no stream - press Start</span>';
+ // agent trace
+ const term=$('agent');m.agent.forEach(r=>{const d=document.createElement('div');d.className=r.kind;d.textContent=new Date(r.t*1000).toLocaleTimeString()+'  ['+r.kind+']  '+r.text;term.appendChild(d)});
+ if(m.agent.length)term.scrollTop=term.scrollHeight;
+ // events: merged from all nodes
+ const ev=[];Object.entries(st).forEach(([n,s])=>s.events&&s.events.slice(-6).forEach(e=>ev.push([e.t,n,e.msg])));ev.sort((a,b)=>a[0]-b[0]);
+ $('events').innerHTML=[...new Map(ev.map(e=>[e.join('|'),e])).values()].slice(-40).map(e=>`<div class="info">${new Date(e[0]*1000).toLocaleTimeString()} [${e[1]}] ${esc(e[2])}</div>`).join('');
+ $('events').scrollTop=$('events').scrollHeight;
+ // hex
+ $('hex').innerHTML=m.wire.slice().reverse().map(hexRow).join('');}
+function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function hexRow(w){const b=w.hex.match(/../g)||[];let out='',i=0;
+ while(i<b.length){const h=b[i];if(i==0||i==b.length-1)out+=`<span class="f">${h}</span> `;
+  else if(h=='7d'&&i+1<b.length-1){out+=`<span class="e">${h} ${b[i+1]}</span> `;i++}
+  else if(w.valid&&i>=b.length-5&&i<b.length-1)out+=`<span class="c">${h}</span> `;
+  else out+=h+' ';i++}
+ const meta=w.valid?`${w.dir} ${w.neighbor} ${w.type} ${w.src}→${w.dst} seq=${w.seq} ack=${w.ack} len=${w.plen} crc=${w.crc}`:`<span class="badf">${w.dir} ${w.neighbor} INVALID ${esc(w.error||'')}</span>`;
+ return `<div class="meta">${meta}</div><div>${out}</div>`}
+init();
+</script></body></html>
