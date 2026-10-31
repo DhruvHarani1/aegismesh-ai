@@ -18,24 +18,12 @@ Pure Python 3.10+ standard library (nothing to install). Optional: `pip install 
 ## Run it on one machine (5 local processes)
 
 ```bash
-python -m unittest discover -s tests -v          # unit tests
-python run_local.py                              # terminal 1: nodes A-E on 127.0.0.1
-python -m aegismesh.netops_agent                 # terminal 2: AI agent
-python dashboard/server.py                       # terminal 3: http://localhost:8080
+python -m unittest discover -s tests -v          # optional: unit tests
+python start.py                                  # nodes A-E + AI agent + dashboard, opens http://localhost:8080
 ```
 
-In the dashboard: press **Start** (stream A -> E), then follow the viva script:
-
-1. Steady state: path A-B-C-E glows, wire inspector shows `7E` flags, stuffed `7D xx` pairs, CRC.
-2. **Sever link** B-C (90% loss + 400 ms RTT): ARQ window shows retransmits, link pulses red.
-3. Agent detects loss, calls `update_link_cost(B, C, 9999)`, path flips to A-D-E, 0 frames missing.
-4. **Infect node** D: it floods bad-CRC frames and forbidden-port / non-UTF-8 packets; peers' DPI
-   counts them, the agent calls `quarantine_node(D)`, sockets to D are dropped. RCA reports land in `runtime/rca/`.
-
-Note: with D quarantined and B-C still severed, the only path left is the degraded one. Press
-**Heal link** (the agent restores the cost after ~6 clean polls) or **Release quarantine** to recover.
-
-CLI equivalents: `python -m aegismesh.chaos_injector sever B C | heal B C | infect D | cure D | stream A E`.
+`start.py` also begins the A -> E test stream. Ctrl+C stops everything. See [GUIDE.md](GUIDE.md) for the
+step-by-step demo (sever a link, watch the AI heal it, infect a node, watch it get quarantined).
 
 ## Run it on 5 laptops
 
