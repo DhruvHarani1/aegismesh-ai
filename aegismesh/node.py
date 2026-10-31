@@ -299,7 +299,8 @@ class Node:
             def stale(f, link=link):
                 nh = self.fib.get(f.dst)
                 return nh is not None and nh[0] != link.id and f.dst != link.id
-            for f in link.sender.extract(stale):
+            filler = Frame(self.id, link.id, T_DATA, 0, 0, b"")  # keeps the ARQ slot alive
+            for f in link.sender.extract(stale, filler):
                 out = self.links.get(self.fib[f.dst][0])
                 if out is not None:
                     out.sender.submit(f)
@@ -355,6 +356,8 @@ class Node:
 
     # ------------------------------------------------------------ data plane
     def _on_deliver(self, link, f):
+        if not f.payload:  # ARQ slot filler left behind by a re-route; nothing to deliver
+            return
         ok, reason, parsed = self.dpi.inspect(f, link.id)
         if not ok:
             self.log("DPI drop from %s: %s" % (link.name, reason)) if self.dpi.recent(link.id) <= 3 else None

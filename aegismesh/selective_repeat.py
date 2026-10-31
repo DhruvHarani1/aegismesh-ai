@@ -85,7 +85,9 @@ class SRSender:
         now = now or time.monotonic()
         n = 0
         for a in range(self.base, self.next):
-            st = self.inflight[a]
+            st = self.inflight.get(a)
+            if st is None:  # acked (and slid out) by a re-entrant send_fn
+                continue
             if not st["acked"] and now - st["sent_at"] >= self.rto * min(2 ** (st["tries"] - 1), 8):
                 st["tries"] += 1
                 st["sent_at"] = now
@@ -94,20 +96,21 @@ class SRSender:
                 n += 1
         return n
 
-    def extract(self, pred):
+    def extract(self, pred, filler):
         """Remove (and return) every unacked or queued item for which pred(item) is true.
-        In-flight frames are marked acked locally so the window slides and the timer stops."""
+
+        Queued items simply leave. In-flight items keep their sequence slot: the receiver is
+        still waiting for that wire seq, so the slot is re-armed with `filler` (a no-op item)
+        instead of being abandoned; abandoning it would desynchronise sender and receiver
+        permanently."""
         taken = [it for it in self.queue if pred(it)]
         if taken:
             self.queue = deque(it for it in self.queue if not pred(it))
         for a in range(self.base, self.next):
             st = self.inflight[a]
             if not st["acked"] and pred(st["item"]):
-                st["acked"] = True
                 taken.append(st["item"])
-        while self.base < self.next and self.inflight[self.base]["acked"]:
-            del self.inflight[self.base]
-            self.base += 1
+                st["item"] = filler
         self.pump()
         return taken
 

@@ -115,6 +115,43 @@ class SelectiveRepeat(unittest.TestCase):
         self.assertEqual(sorted(sent), [0, 2])
 
 
+class RerouteKeepsSequenceInSync(unittest.TestCase):
+    def test_extract_does_not_strand_receiver(self):
+        """Moving in-flight frames to another path must not leave the receiver waiting forever."""
+        got = []
+        rx = SRReceiver(got.append)
+        drop = {"on": True}
+        acks = []
+        tx = None
+
+        def send(seq, item):
+            if not drop["on"]:
+                acks.append(rx.on_data(seq, item))  # ACK travels back later, like a real network
+
+        def flush():
+            while acks:
+                tx.on_ack(*acks.pop(0))
+
+        tx = SRSender(send, rto_init=0.001, rto_min=0.001)
+        for i in range(12):
+            tx.submit(("real", i))
+        moved = tx.extract(lambda it: it[0] == "real", ("filler", None))
+        self.assertEqual(sorted(i for _, i in moved), list(range(12)))
+        drop["on"] = False       # link recovers
+        import time
+        time.sleep(0.01)
+        tx.tick()
+        flush()
+        for i in range(20):
+            tx.submit(("real2", i))
+        for _ in range(100):
+            tx.tick()
+            flush()
+            time.sleep(0.002)
+        self.assertEqual([x for x in got if x[0] == "real2"], [("real2", i) for i in range(20)])
+        self.assertEqual(tx.base, tx.next)
+
+
 class Routing(unittest.TestCase):
     G = {"A": {"B": 1, "D": 2}, "B": {"A": 1, "C": 1, "D": 2}, "C": {"B": 1, "E": 1},
          "D": {"A": 2, "B": 2, "E": 2}, "E": {"C": 1, "D": 2}}
