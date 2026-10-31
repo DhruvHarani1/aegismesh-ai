@@ -82,6 +82,18 @@ class NetOpsAgent:
             reasons = {o["reason"] for o in obs if o["reason"]}
             self.trace.emit("thought", "DPI/CRC alarms attributed to node %s by %s (score %d). Reasons: %s" % (
                 an.subject, ", ".join(o["observer"] for o in obs), an.evidence["score"], "; ".join(sorted(reasons)) or "n/a"))
+            rest = {u: {v: w for v, w in nb.items() if an.subject not in (u, v)}
+                    for u, nb in self._graph(st).items() if u != an.subject}
+            others = [n for n in self.cfg.nodes if n != an.subject
+                      and n not in {q for s_ in st.values() for q in s_.get("quarantine", {})}
+                      and "error" not in st.get(n, {})]
+            if others:
+                reach, _ = shortest_paths(rest, others[0])
+                cut = [n for n in others if n not in reach]
+                if cut:
+                    self.trace.emit("thought", "Refusing to quarantine %s: it would cut %s off from the mesh. Alerting an operator instead." % (
+                        an.subject, ", ".join(cut)))
+                    return None
             return {"action": "quarantine_node", "node": an.subject,
                     "reason": "; ".join(sorted(reasons))[:120] or "DPI violations"}
         if an.kind == "link_recovered":

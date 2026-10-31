@@ -16,9 +16,12 @@ from .mesh_tools import MeshClient
 
 def build(config_path):
     try:
-        from mcp.server.fastmcp import FastMCP
+        from mcp.server.fastmcp import FastMCP            # mcp 1.x
     except ImportError:
-        raise SystemExit("The 'mcp' package is required: pip install mcp")
+        try:
+            from mcp.server.mcpserver import MCPServer as FastMCP   # mcp 2.x renamed it
+        except ImportError:
+            raise SystemExit("The 'mcp' package is required: pip install mcp")
     client = MeshClient(MeshConfig(config_path))
     mcp = FastMCP("aegismesh")
 

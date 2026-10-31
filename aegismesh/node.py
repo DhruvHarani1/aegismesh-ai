@@ -29,7 +29,7 @@ from .quarantine import QuarantineManager
 from .selective_repeat import SRReceiver, SRSender
 from .topology_db import LSDB
 
-HB = struct.Struct(">BId")  # kind(0 ping/1 pong) seq ts
+HB = struct.Struct(">BIdI")  # kind(0 ping/1 pong) seq ts boot_id
 
 
 class Link:
@@ -37,6 +37,7 @@ class Link:
         self.name, self.id, self.addr, self.base_cost = name, ident, addr, base_cost
         self.override = None
         self.last_heard = 0.0
+        self.peer_boot = None   # neighbour's boot id; a change means it restarted
         self.up = False
         self.hb_seq = 0
         self.pings = {}                                  # seq -> sent monotonic
@@ -77,6 +78,7 @@ class Node:
         self.cfg, self.name = cfg, name
         self.id = cfg.nodes[name]["id"]
         self.p = cfg.params
+        self.boot_id = random.getrandbits(32)
         self.lock = threading.RLock()
         self.running = False
         self.started = time.time()
@@ -201,7 +203,7 @@ class Node:
         except FrameError as e:
             link.crc_total += 1
             link.crc_events.append(time.monotonic())
-            self.dpi.record_violation(link.id, "L2 %s: %s" % (type(e).__name__, e))
+            self.dpi.note_l2(link.id, "L2 %s: %s" % (type(e).__name__, e))
             return
         self._heard(link)
         if f.ftype == T_HEARTBEAT:
@@ -227,13 +229,30 @@ class Node:
     def _on_heartbeat(self, link, f):
         if len(f.payload) < HB.size:
             return
-        kind, seq, ts = HB.unpack_from(f.payload)
+        kind, seq, ts, boot = HB.unpack_from(f.payload)
+        if link.peer_boot is not None and link.peer_boot != boot:
+            self._peer_restarted(link)
+        link.peer_boot = boot
         if kind == 0:
-            self._tx(link, Frame(self.id, link.id, T_HEARTBEAT, f.seq, 0, HB.pack(1, seq, ts)))
+            self._tx(link, Frame(self.id, link.id, T_HEARTBEAT, f.seq, 0, HB.pack(1, seq, ts, self.boot_id)))
         else:
             if link.pings.pop(seq, None) is not None:
                 link.window.append(True)
                 link.rtts.append(time.monotonic() - ts)
+
+    def _peer_restarted(self, link):
+        """Neighbour rebooted: its ARQ state is gone, so ours must restart too or the two ends
+        disagree on sequence numbers forever. Unacknowledged frames are re-queued, not lost."""
+        pending = [st["item"] for a, st in sorted(link.sender.inflight.items()) if not st["acked"]]
+        pending += list(link.sender.queue)
+        pending = [f for f in pending if f.payload]  # drop slot fillers
+        rt = link.sender.retransmits, link.sender.sent
+        link.sender = SRSender(lambda seq, f: self._tx(link, Frame(f.src, f.dst, T_DATA, seq, 0, f.payload)))
+        link.sender.retransmits, link.sender.sent = rt
+        link.receiver = SRReceiver(lambda f: self._on_deliver(link, f))
+        self.log("neighbour %s restarted: ARQ session reset, %d frames re-queued" % (link.name, len(pending)))
+        for f in pending:
+            link.sender.submit(f)
 
     def _send_pings(self, now):
         for link in self.links.values():
@@ -242,7 +261,7 @@ class Node:
             link.hb_seq = (link.hb_seq + 1) & 0xFFFFFFFF
             link.pings[link.hb_seq] = now
             self._tx(link, Frame(self.id, link.id, T_HEARTBEAT, link.hb_seq & 0xFFFF, 0,
-                                 HB.pack(0, link.hb_seq, now)))
+                                 HB.pack(0, link.hb_seq, now, self.boot_id)))
             for seq, t in list(link.pings.items()):
                 if now - t > self.p["hb_timeout"]:
                     del link.pings[seq]
@@ -352,7 +371,8 @@ class Node:
         target = body[0]
         if target == self.id:
             return
-        self.do_quarantine(target, body[1:].decode(errors="replace") + " (flooded)", announce=True)
+        why = body[1:].decode(errors="replace")
+        self.do_quarantine(target, why if why.endswith("(flooded)") else why + " (flooded)", announce=True)
 
     # ------------------------------------------------------------ data plane
     def _on_deliver(self, link, f):
@@ -377,12 +397,16 @@ class Node:
     def _app_receive(self, src, sport, dport, data):
         if dport == appproto.PORT_STREAM:
             try:
-                seq_s, ts_s = data.split(b"|", 2)[:2]
-                seq, ts = int(seq_s), float(ts_s)
+                epoch_s, seq_s, ts_s = data.split(b"|", 3)[:3]
+                epoch, seq, ts = int(epoch_s), int(seq_s), float(ts_s)
             except ValueError:
                 return
-            st = self.app_rx.setdefault(src, {"seqs": set(), "max_seq": -1, "lat": deque(maxlen=50),
-                                              "first": time.time(), "last": time.time(), "dups": 0})
+            st = self.app_rx.get(src)
+            if st is not None and epoch < st["epoch"]:
+                return                               # straggler from an older stream
+            if st is None or st["epoch"] != epoch:   # new stream (restart) -> fresh accounting
+                st = self.app_rx[src] = {"epoch": epoch, "seqs": set(), "max_seq": -1, "lat": deque(maxlen=50),
+                                         "first": time.time(), "last": time.time(), "dups": 0}
             if seq in st["seqs"]:
                 st["dups"] += 1
                 return
@@ -416,9 +440,10 @@ class Node:
 
         def run():
             i = 0
+            epoch = int(time.time() * 1000) % 2_000_000_000  # distinguishes this run from earlier ones
             while self.running and self.app_tx["running"] and (count == 0 or i < count):
                 pad = b"x" * max(0, size - 24)
-                self.send_app(dst, appproto.PORT_STREAM, b"%d|%.6f|" % (i, time.time()) + pad)
+                self.send_app(dst, appproto.PORT_STREAM, b"%d|%d|%.6f|" % (epoch, i, time.time()) + pad)
                 i += 1
                 time.sleep(interval_ms / 1000.0)
             self.app_tx["running"] = False
@@ -443,6 +468,26 @@ class Node:
             self.log("cost override on link %s -> %s" % (link.name, "none" if cost is None else cost))
             self._originate_lsa()
 
+    def clear_forged_backlog(self):
+        """Cured: stop sending the junk that was still queued behind the ARQ window."""
+        def forged(f):
+            if f.src != self.id or not f.payload:
+                return False
+            parsed = appproto.unpack(f.payload)
+            if parsed is None:
+                return False
+            dport, data = parsed[3], parsed[4]
+            if dport == 6666:
+                return True
+            try:
+                data.decode("utf-8")
+            except UnicodeDecodeError:
+                return True
+            return False
+        with self.lock:
+            for l in self.links.values():
+                l.sender.extract(forged, Frame(self.id, l.id, T_DATA, 0, 0, b""))
+
     def _rogue_tick(self):
         for l in list(self.links.values()):
             if l.id in self.quarantine:
@@ -458,7 +503,8 @@ class Node:
                 pl = appproto.pack(16, 1, 666, 6666, b"exfil")
             else:
                 pl = appproto.pack(16, 1, 666, appproto.PORT_CHAT, bytes([0xFF, 0xFE, 0x00, 0x01]))
-            l.sender.submit(Frame(self.id, dst, T_DATA, 0, 0, pl))
+            if len(l.sender.queue) < 50:   # a real attacker is rate-limited by the ARQ window too
+                l.sender.submit(Frame(self.id, dst, T_DATA, 0, 0, pl))
 
     # ------------------------------------------------------------ timer loop
     def _timer_loop(self):

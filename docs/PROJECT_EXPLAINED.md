@@ -510,7 +510,11 @@ on the real laptops before the viva.)
 **Q: What are the limits?**
 LSA flooding is not individually acknowledged (it is refreshed every second instead). Chaos is injected in
 software at the sender, not on a real radio link. Dijkstra timing quoted is for 5 nodes. The shared secret is
-a demo value. These are acceptable trade-offs for a teaching system.
+a demo value. Because ARQ is hop-by-hop, frames that a node had already acknowledged but not yet forwarded are
+lost if that node crashes (we measured 2 frames lost when node C was killed mid-stream); end-to-end
+acknowledgements would fix that at the cost of slower recovery. Rogue detection weighs policy violations
+heavily and CRC failures only at flood rates, so ordinary line noise is not mistaken for an attack, and the
+agent refuses to quarantine a node if that would cut other nodes off from the mesh.
 
 ---
 

@@ -46,9 +46,15 @@ print("AegisMesh running: %d nodes + agent + dashboard\n  dashboard: %s\n  Ctrl+
 if not a.no_browser:
     webbrowser.open(url)
 try:
-    while all(p.poll() is None for p in procs):
+    reported = set()
+    while True:
+        for p in procs:  # a crashed/killed node is reported but never takes the rest down
+            if p.poll() is not None and p.pid not in reported:
+                reported.add(p.pid)
+                print("process %d exited (code %s); the rest keeps running" % (p.pid, p.returncode), flush=True)
+        if len(reported) == len(procs):
+            break
         time.sleep(1)
-    print("a process exited unexpectedly; shutting down", flush=True)
 except KeyboardInterrupt:
     pass
 finally:

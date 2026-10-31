@@ -22,12 +22,18 @@ class DPIInspector:
         self.events = defaultdict(deque)   # neighbor id -> deque of timestamps
         self.totals = defaultdict(int)     # neighbor id -> total violations
         self.last_reason = {}
+        self.last_l2_reason = {}
         self.inspected = 0
 
     def record_violation(self, neighbor, reason):
         self.events[neighbor].append(time.monotonic())
         self.totals[neighbor] += 1
         self.last_reason[neighbor] = reason
+
+    def note_l2(self, neighbor, reason):
+        """Frame failed CRC/structure checks. This is what random line noise looks like too, so it is
+        kept out of the policy-violation score (see AnomalyDetector for how it is weighed)."""
+        self.last_l2_reason[neighbor] = reason
 
     def recent(self, neighbor):
         q = self.events[neighbor]
@@ -67,4 +73,5 @@ class DPIInspector:
         return {"inspected": self.inspected,
                 "recent": {str(n): self.recent(n) for n in list(self.events)},
                 "totals": {str(n): c for n, c in self.totals.items()},
-                "last_reason": {str(n): r for n, r in self.last_reason.items()}}
+                "last_reason": {str(n): r for n, r in self.last_reason.items()},
+                "last_l2_reason": {str(n): r for n, r in self.last_l2_reason.items()}}

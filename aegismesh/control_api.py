@@ -68,6 +68,8 @@ def serve(node, host, port):
                 return {"ok": node.do_unquarantine(nid(b["node"]))}
             if path == "/infect":
                 node.rogue = bool(b.get("on", True))
+                if not node.rogue:
+                    node.clear_forged_backlog()
                 node.log("ROGUE MODE %s" % ("ON" if node.rogue else "off"))
                 return {"ok": True, "rogue": node.rogue}
             if path == "/stream":

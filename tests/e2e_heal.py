@@ -87,7 +87,38 @@ try:
         wait(lambda: path() == ["A", "B", "C", "E"], "agent restored A-B-C-E", 40)
         flowing("after recovery")
         drained("after heal")
+    print("line noise on every link must NOT be mistaken for a rogue node", flush=True)
+    for n in cfg.nodes:
+        cl.call(n, "/chaos", {"neighbor": "*", "loss": 0.15, "delay_ms": 0, "corrupt": 0.10})
+    time.sleep(10)
+    for n in cfg.nodes:
+        cl.call(n, "/chaos", {"neighbor": "*", "loss": 0, "delay_ms": 0, "corrupt": 0})
+    q = {n: list(s["quarantine"]) for n, s in cl.collect().items() if s["quarantine"]}
+    if q:
+        fail("innocent nodes quarantined by noise: %s" % q)
+    print("  ok: nobody quarantined under noise", flush=True)
+    wait(lambda: path() == ["A", "B", "C", "E"], "path back to A-B-C-E after noise", 60)
+    drained("after noise")
+    flowing("after noise")
+    print("crash node C and restart it", flush=True)
+    procs[list(cfg.nodes).index("C")].kill()
+    wait(lambda: path() == ["A", "D", "E"], "rerouted around dead C", 30)
+    flowing("while C is dead")
+    procs[list(cfg.nodes).index("C")] = subprocess.Popen(
+        py + ["-m", "aegismesh.node", "--config", cfg_path, "--name", "C"], cwd=ROOT, stdout=subprocess.DEVNULL)
+    wait(lambda: path() == ["A", "B", "C", "E"], "C rejoined, path restored", 40)
+    flowing("after C rejoined")
+    drained("after C rejoined")
     print("rogue node D", flush=True)
+    for _ in range(2):   # also proves the agent re-quarantines after a release
+        ch.infect("D")
+        wait(lambda: "D" in cl.call("A", "/status").get("quarantine", {}), "D quarantined", 30)
+        flowing("with D quarantined")
+        ch.infect("D", False)
+        cl.release_node("D")
+        time.sleep(3)
+        flowing("after D released")
+        drained("after release")
     ch.infect("D")
     wait(lambda: "D" in cl.call("A", "/status").get("quarantine", {}), "D quarantined", 30)
     flowing("with D quarantined")
